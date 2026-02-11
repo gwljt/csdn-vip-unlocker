@@ -1,0 +1,17 @@
+[project]
+name = "nodriver-request-interceptor"
+version = "1.0.0"
+description = "A tool to intercept and analyze network requests using nodriver"
+authors = [{name = "Developer", email = "developer@example.com"}]
+requires-python = ">=3.9"
+dependencies = [
+    "nodriver==0.48.1",
+    "mss==10.1.0",
+    "websockets>=14",
+    "deprecated==1.2.14",
+    "wrapt==1.16.0",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
