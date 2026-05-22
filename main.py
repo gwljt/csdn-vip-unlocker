@@ -34,7 +34,7 @@ def find_browser_executable():
         program_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
         program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
         local_app_data = os.environ.get("LOCALAPPDATA", "C:\\Users\\%USERNAME%\\AppData\\Local")
-        
+
         candidates = [
             os.path.join(program_files, "Google\\Chrome\\Application\\chrome.exe"),
             os.path.join(program_files_x86, "Google\\Chrome\\Application\\chrome.exe"),
@@ -57,11 +57,11 @@ def find_browser_executable():
         if os.path.exists(path) and os.access(path, os.X_OK):
             logger.info(f"Found browser executable: {path}")
             return path
-    
+
     return None
 
 # Initial URL to test
-url = 'https://blog.csdn.net/acm_pn/article/details/144218481'
+url = "https://blog.csdn.net/weixin_28835551/article/details/158144762"
 
 async def main():
     logger.info("Starting browser...")
@@ -95,6 +95,19 @@ async def main():
 
     hook_manager = HookManager()
 
+    async def safe_evaluate(tab, script, timeout=2.0):
+        """
+        安全地在页面执行 JavaScript 脚本，并设置超时以防被调试器（anti-debugging）或其他卡死锁定整个监控循环。
+        """
+        try:
+            await asyncio.wait_for(tab.evaluate(script), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(f"Evaluating script timed out on tab {tab.target.target_id} (可能被调试器/反爬虫暂停)")
+        except Exception as e:
+            logger.debug(f"Failed to evaluate script on tab {tab.target.target_id}: {e}")
+        return False
+
     async def setup_interception(target_page):
         # We need to know the URL to select the hook.
         # But target_page.target.url might be available
@@ -106,6 +119,14 @@ async def main():
             return
 
         logger.info(f"Applying hook for {current_url}")
+
+        # 开启调试器域并配置跳过所有暂停点（防止 CSDN 无限 debugger 反爬机制导致页面卡死）
+        try:
+            await target_page.send(uc.cdp.debugger.enable())
+            await target_page.send(uc.cdp.debugger.set_skip_all_pauses(skip=True))
+            logger.info(f"Bypassed anti-debugger for {current_url}")
+        except Exception as e:
+            logger.warning(f"Failed to bypass anti-debugger for {current_url}: {e}")
 
         async def handle_request_paused(event: uc.cdp.fetch.RequestPaused):
             await hook.handle_request(event, target_page)
@@ -126,6 +147,13 @@ async def main():
     page = await browser.get('about:blank')
     logger.info("Browser started.")
     
+    # 尝试在初始空白页也配置防调试挂起
+    try:
+        await page.send(uc.cdp.debugger.enable())
+        await page.send(uc.cdp.debugger.set_skip_all_pauses(skip=True))
+    except Exception:
+        pass
+
     logger.info(f"Navigating to {url}")
     await page.get(url)
     
@@ -151,7 +179,7 @@ async def main():
                                 await setup_interception(tab)
                                 monitored_target_ids.add(tid)
                                 # Initial injection for existing content
-                                await tab.evaluate(hook.injection_script)
+                                await safe_evaluate(tab, hook.injection_script)
                             except Exception as e:
                                 logger.error(f"Failed to setup interception for tab {tid}: {e}")
                         else:
@@ -162,11 +190,7 @@ async def main():
                     # Only if a hook applies
                     hook = hook_manager.get_hook(current_url)
                     if hook:
-                        try:
-                            await tab.evaluate(hook.injection_script)
-                        except Exception:
-                            pass # Tab might be closed or detached
-
+                        await safe_evaluate(tab, hook.injection_script)
 
             await asyncio.sleep(2)
         except KeyboardInterrupt:
@@ -177,4 +201,3 @@ async def main():
 
 if __name__ == '__main__':
     uc.loop().run_until_complete(main())
-
